@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 
 
 
-def time_series(center_x,center_y, radius, hdu_filenames):
+def time_series(centers, radius, hdu_filenames, red_files = False, rf_slope = False):
     
     """ 
     time_series prameters:
@@ -23,28 +23,61 @@ def time_series(center_x,center_y, radius, hdu_filenames):
                        
     """
     
-    center = (center_x,center_y)
     single_rad_data = Table(names=('Flux','Time'))
-    for hdus in hdu_filenames:
-        hdu = fits.open(hdus)
-        image = hdu[0].data
-        image2d = image[0]
-        mask = np.isnan(image2d) == True
-        aperture = CircularAperture(center, r = radius)
-        phot_table = aperture_photometry(image2d, aperture, mask = mask)
-        header = hdu[0].header
-        time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
-        a = [phot_table[0][0]]
-        b = time
-        single_rad_data.add_row([a,b])
-        hdu.close()
-    return single_rad_data
+    if red_files == False:
+        for i, hdus in enumerate(hdu_filenames):
+            hdu = fits.open(hdus)
+            image = hdu[0].data
+            image2d = image[0]
+            mask = np.isnan(image2d) == True
+            aperture = CircularAperture(centers[i], r = radius)
+            phot_table = aperture_photometry(image2d, aperture, mask = mask)
+            header = hdu[0].header
+            time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
+            a = [phot_table[0][0]]
+            b = time
+            single_rad_data.add_row([a,b])
+            hdu.close()
+        return single_rad_data
+    else:
+        if rf_slope == False:
+            for i, hdus in enumerate(hdu_filenames):
+                hdu = fits.open(hdus)
+                image = hdu[0].data
+                header = hdu[0].header
+                image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
+                mask = np.isnan(image2d) == True
+                aperture = CircularAperture(centers[i], r = radius)
+                phot_table = aperture_photometry(image2d, aperture, mask = mask)
+                header = hdu[0].header
+                time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
+                a = [phot_table[0][0]]
+                b = time
+                single_rad_data.add_row([a,b])
+                hdu.close()
+            return single_rad_data
+        else:
+            for i, hdus in enumerate(hdu_filenames):
+                hdu = fits.open(hdus)
+                image = hdu[0].data
+                header = hdu[0].header
+                image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
+                mask = np.isnan(image2d) == True
+                aperture = CircularAperture(centers[i], r = radius)
+                phot_table = aperture_photometry(image2d, aperture, mask = mask)
+                header = hdu[0].header
+                time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
+                a = [phot_table[0][0]]
+                b = time
+                single_rad_data.add_row([a,b])
+                hdu.close()
+            return single_rad_data
 
 
 
 
 
-def light_curve(x, y, x_err, y_err, style, lbl):
+def light_curve(x, y, style, x_err = None, y_err = None, lbl = None):
     
     """ 
     light_curve prameters:
@@ -65,7 +98,7 @@ def light_curve(x, y, x_err, y_err, style, lbl):
     
     
 
-def rms_vs_bin(x, y, bin_size_low, bin_size_up, bin_size_inc, num_points, style):
+def rms_vs_bin(x, y, bin_size_low, bin_size_up, bin_size_inc, num_points, style, lbl = None):
     
     """ 
     rms_vs_bin prameters:
@@ -92,15 +125,15 @@ def rms_vs_bin(x, y, bin_size_low, bin_size_up, bin_size_inc, num_points, style)
             flux_array.append(flux_in_one_bin)
         norm_flux_array = flux_array/np.median(y[bin_start:bin_end])
         stdev_in_one_bin = np.std(norm_flux_array)
-        stdev_array.append(stdev_in_one_bin)
+        stdev_array.append(stdev_in_one_bin*1e6)
         time_point = x[bin_size] - x[0]
         time_array.append(time_point)
 
     model = stdev_array[0]/np.sqrt(bin_size_array)       
-    plt.loglog(time_array,stdev_array, style)
+    plt.loglog(time_array,stdev_array, style, label = lbl)
     plt.loglog(time_array, model, 'k--')
-    plt.xlabel('Bin size')
-    plt.ylabel('Standard Deviation (DN/s)')
+    plt.xlabel('Bin size (seconds)')
+    plt.ylabel('$\sigma$ (ppm)')
     
     
     
@@ -124,24 +157,24 @@ def norm_flux_error(flux, gain, hdu_filenames, red_files = False, rf_slope = Fal
             errors_DNps = (np.sqrt(flux[index]*header['INTTIME']*gain))/(gain*header['INTTIME'])
             errors_normalized = errors_DNps/flux
             norm_error.append(errors_normalized)
-            return norm_error
+        return norm_error
 
     else:
         if rf_slope == False: #slope1
             for index, hdus in enumerate(hdu_filenames):    
-            hdu = fits.open(hdus)
-            header = hdu[0].header
-            errors_DNps = (np.sqrt(flux[index]*((header['NGROUP']-1)*header['TGROUP'])*gain))/(((header['NGROUP']-1)*header['TGROUP'])*gain)
-            errors_normalized = errors_DNps/flux
-            norm_error.append(errors_normalized)
+                hdu = fits.open(hdus)
+                header = hdu[0].header
+                errors_DNps = (np.sqrt(flux[index]*((header['NGROUP']-1)*header['TGROUP'])*gain))/(((header['NGROUP']-1)*header['TGROUP'])*gain)
+                errors_normalized = errors_DNps/flux
+                norm_error.append(errors_normalized)
             return norm_error
         else: #Slope2
             for index, hdus in enumerate(hdu_filenames):    
-            hdu = fits.open(hdus)
-            header = hdu[0].header
-            errors_DNps = (np.sqrt(flux[index]*(header['NGROUP']*header['TGROUP'])*gain))/((header['NGROUP']*header['TGROUP'])*gain)
-            errors_normalized = errors_DNps/flux
-            norm_error.append(errors_normalized)
+                hdu = fits.open(hdus)
+                header = hdu[0].header
+                errors_DNps = (np.sqrt(flux[index]*(header['NGROUP']*header['TGROUP'])*gain))/((header['NGROUP']*header['TGROUP'])*gain)
+                errors_normalized = errors_DNps/flux
+                norm_error.append(errors_normalized)
             return norm_error
 
 
@@ -217,7 +250,7 @@ def gen_center_g2d(center_x, center_y, box_width, amp, x_std, y_std, Theta, hdu_
             x_values.append(g2.x_mean)
             y_values.append(g2.y_mean)
         separate_centers = zip(x_values,y_values)    
-    return separate_centers
+    return separate_centers, x_values, y_values
 
 
 
@@ -504,7 +537,7 @@ def average_residual_flux(centers_a1, centers_b4, R, R_in, R_out, hdu_filenames,
 
 
 
-def linear_bestfit(x, y, x_err, y_err, slope_guess, intercept_guess, style):
+def linear_bestfit(x, y, slope_guess, intercept_guess, show_plot = False, x_err = None, y_err = None, style = None):
     
     """ 
     linear_bestfit prameters:
@@ -518,22 +551,30 @@ def linear_bestfit(x, y, x_err, y_err, slope_guess, intercept_guess, style):
     About the function: 
         This function does a linear best fit to your data distribution and returns the detrended flux data in the form of an array.
     """
-    norm_y = y/np.median(y)
-    l_init = models.Linear1D(slope = slope_guess, intercept = intercept_guess)
-    fit_l = fitting.LevMarLSQFitter()
-    l = fit_l(l_init, x, norm_y)
-    detrend_flux_data = norm_y/l(x)
-    # Plot the data with bets fit line
-    plt.subplot(1,2,1)
-    plt.errorbar(x, y/np.median(y), xerr = x_err, yerr = y_err, fmt= style)
-    plt.plot(x, l(x), 'k--')
-    plt.xlabel('Time[sec]')
-    plt.ylabel('Normalized Flux')
-    plt.title('Normalized Data With Linear Best Fit')
-    plt.subplot(1,2,2)
-    plt.plot(x, detrend_flux_data, '.-')
-    plt.xlabel('Time[sec]')
-    plt.ylabel('Normalized Detrended Flux')
-    plt.title('Detrended Time Series')
-    return detrend_flux_data
+    if show_plot == False:
+        norm_y = y/np.median(y)
+        l_init = models.Linear1D(slope = slope_guess, intercept = intercept_guess)
+        fit_l = fitting.LevMarLSQFitter()
+        l = fit_l(l_init, x, norm_y)
+        detrend_flux_data = norm_y/l(x)
+        return detrend_flux_data
+    else:
+        norm_y = y/np.median(y)
+        l_init = models.Linear1D(slope = slope_guess, intercept = intercept_guess)
+        fit_l = fitting.LevMarLSQFitter()
+        l = fit_l(l_init, x, norm_y)
+        detrend_flux_data = norm_y/l(x)
+        # Plot the data with bets fit line
+        plt.subplot(1,2,1)
+        plt.errorbar(x, y/np.median(y), xerr = x_err, yerr = y_err, fmt= style)
+        plt.plot(x, l(x), 'k--')
+        plt.xlabel('Time[sec]')
+        plt.ylabel('Normalized Flux')
+        plt.title('Normalized Data With Linear Best Fit')
+        plt.subplot(1,2,2)
+        plt.plot(x, detrend_flux_data, '.-')
+        plt.xlabel('Time[sec]')
+        plt.ylabel('Normalized Detrended Flux')
+        plt.title('Detrended Time Series')
+        return detrend_flux_data
     
