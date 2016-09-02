@@ -10,89 +10,71 @@ import matplotlib.pyplot as plt
 
 
 
-def time_series(centers, radius, hdu_filenames, red_files = False, rf_slope = False):
+def time_series(center_x, center_y, radius, hdu_filenames, red = False, red2 = False):
     
     """ 
-    time_series prameters:
-        center_x = x coordinate of the circular aperture, type = float
-        center_y = y coordinate of the circular aperture, type = float
-        radius = radius of circular aperture, type = float
-        hdu_filenames = list of fits filenames (not the files themselves, just the names. i.e. strings), type = list
-    About the function: 
-        Returns a simple time series without background subtraction, fitted centers or other stuff
+    PARAMETERS:
+        center_x = x coordinate of the circular aperture; Type = Float
+        center_y = y coordinate of the circular aperture; Type = Float
+        radius = radius of circular aperture; Type = Float
+        hdu_filenames = list of fits filenames, type = list [of strings]
+        red = Whether the files are .red files or not. Default value: "False"; type = Boolean
+        red2 = Whether you want to use Slope2 method or not. Default value: "False"; type = Boolean. 
+        
+    RETURNS: 
+        single_rad_data = column names: "Flux", "Time"; Type = Table
                        
     """
     
     single_rad_data = Table(names=('Flux','Time'))
-    if red_files == False:
-        for i, hdus in enumerate(hdu_filenames):
-            hdu = fits.open(hdus)
-            image = hdu[0].data
-            image2d = image[0]
-            mask = np.isnan(image2d) == True
-            aperture = CircularAperture(centers[i], r = radius)
-            phot_table = aperture_photometry(image2d, aperture, mask = mask)
-            header = hdu[0].header
-            time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
-            a = [phot_table[0][0]]
-            b = time
-            single_rad_data.add_row([a,b])
-            hdu.close()
-        return single_rad_data
-    else:
-        if rf_slope == False:
-            for i, hdus in enumerate(hdu_filenames):
-                hdu = fits.open(hdus)
-                image = hdu[0].data
-                header = hdu[0].header
-                image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
-                mask = np.isnan(image2d) == True
-                aperture = CircularAperture(centers[i], r = radius)
-                phot_table = aperture_photometry(image2d, aperture, mask = mask)
-                header = hdu[0].header
-                time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
-                a = [phot_table[0][0]]
-                b = time
-                single_rad_data.add_row([a,b])
-                hdu.close()
-            return single_rad_data
-        else:
-            for i, hdus in enumerate(hdu_filenames):
-                hdu = fits.open(hdus)
-                image = hdu[0].data
-                header = hdu[0].header
-                image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
-                mask = np.isnan(image2d) == True
-                aperture = CircularAperture(centers[i], r = radius)
-                phot_table = aperture_photometry(image2d, aperture, mask = mask)
-                header = hdu[0].header
-                time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
-                a = [phot_table[0][0]]
-                b = time
-                single_rad_data.add_row([a,b])
-                hdu.close()
-            return single_rad_data
+    
+    for hdus in hdu_filenames:
+        hdu = fits.open(hdus)
+        image = hdu[0].data
+        header = hdu[0].header
+        
+        if red == False:          #.slp files
+            image2d = image[0] 
+        elif red2 == False:       #.red file, Slope1 method
+            image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
+        else:                     #.red file, Slope2 method
+            image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
+            
+        mask = np.isnan(image2d) == True
+        aperture = CircularAperture((center_x,center_y), r = radius)
+        phot_table = aperture_photometry(image2d, aperture, mask = mask)
+        header = hdu[0].header
+        time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
+        a = [phot_table[0][0]]
+        b = time
+        single_rad_data.add_row([a,b])
+        hdu.close()
+    return single_rad_data
+   
+    
 
 
 
 
-
-def light_curve(x, y, style, x_err = None, y_err = None, lbl = None):
+def light_curve(x, y, x_err = None, y_err = None, style = None, lbl = None):
     
     """ 
-    light_curve prameters:
-        x = x data of your plot. i.e. the time array, type = array
-        y = y data of your plot. i.e. the flux array, type = array
-        x_err = set of errors in the x direction, type = array
-        y_err = set of errors in the y direction, type = array
-        style = fmt. ie. the color and style of your curve, type = string
-    About the function: 
-        Produces a simple light curve with errorbars. The flux array will be normalized.
+    PARAMETERS:
+        x = x data of your plot. i.e. the time array; Type = Array
+        y = y data of your plot. i.e. the flux array; Type = Array
+        x_err = set of errors in the x direction. Default value = "None"; Type = Array
+        y_err = set of errors in the y direction. Default value = "None"; Type = Array
+        style = fmt. ie. the color and style of your curve. Default value = "None"; Type = String
+        lbl = Label for the plot. Default value = "None"; Type = String
+        
+    RETURNS: 
+        Plot = Simple light curve
     """
     
     plt.errorbar(x, y/np.median(y), xerr = x_err, yerr = y_err, fmt = style, label = lbl)
     plt.xlabel('Time[sec]')
     plt.ylabel('Normalized Flux[DN/s]')
+    plt.title('Simple light curve')
     
     
     
@@ -101,16 +83,18 @@ def light_curve(x, y, style, x_err = None, y_err = None, lbl = None):
 def rms_vs_bin(x, y, bin_size_low, bin_size_up, bin_size_inc, num_points, style, lbl = None):
     
     """ 
-    rms_vs_bin prameters:
-        x = x data of your plot. i.e. the time array, type = array
-        y = y data of your plot. i.e. the flux array, type = array
-        bin_size_low = lower limit of bin size, type = int
-        bin_size_up = upper limit of bin size, type = int
-        bin_size_inc = The increment by which bin size will be increasing, type = int
-        num_points = Number of points in the data/ length of any of the data arrays
-        style = fmt. ie. the color and style of your curve, type = string
-    About the function: 
-        This function takes in your data set, number of bins you want and their sizes to create a rms vs. bins plot.
+    PARAMETERS:
+        x = x data of your plot. i.e. the time array; Type = Array
+        y = y data of your plot. i.e. the flux array; Type = Array
+        bin_size_low = lower limit of bin size; Type = Int
+        bin_size_up = upper limit of bin size; Type = Int
+        bin_size_inc = The increment by which bin size will be increasing; Type = Int
+        num_points = Number of points in the data/length of any of the data arrays; Type = Int
+        style = fmt. ie. the color and style of your curve; Type = String
+        lbl = Label for the plot. Default value = "None"; Type = String
+        
+    RETURNS: 
+        Plot = rms vs. bin sive with ideal noise
     """
     
     stdev_array = []
@@ -139,117 +123,87 @@ def rms_vs_bin(x, y, bin_size_low, bin_size_up, bin_size_inc, num_points, style,
     
     
 
-def norm_flux_error(flux, gain, hdu_filenames, red_files = False, rf_slope = False):
+def norm_flux_error(flux, gain, hdu_filenames, red = False, red2 = False):
     
     """ 
-    norm_flux_error prameters:
-        flux = Data i.e. the flux array, type = array/table
+    PARAMETERS:
+        flux = Data i.e. the flux array, type = list/array/table
         gain = detector's gain parameter, type = float
-        hdu_filenames = list of fits filenames (not the files themselves, just the names. i.e. strings), type = list
-    About the function: 
-        This function takes in your flux data and calculates normalized error at each point and returns the error table/array. Expect the table length to be equal to array/table length of your data.
+        hdu_filenames = list of fits filenames, type = list [of strings]
+        red = Whether the files are .red files or not. Default value: "False"; type = Boolean
+        red2 = Whether you want to use Slope2 method or not. Default value: "False"; type = Boolean. 
+
+    RETURNS: 
+        norm_error = Normalized errors for each flux data, type = List
     """
     norm_error = []
-    if red_files == False:
-        for index, hdus in enumerate(hdu_filenames):    
-            hdu = fits.open(hdus)
-            header = hdu[0].header
-            errors_DNps = (np.sqrt(flux[index]*header['INTTIME']*gain))/(gain*header['INTTIME'])
-            errors_normalized = errors_DNps/flux
-            norm_error.append(errors_normalized)
-        return norm_error
+    for i, hdus in enumerate(hdu_filenames):
+        hdu = fits.open(hdus)
+        header = hdu[0].header
+        
+        if red == False:
+            errors_DNps = (np.sqrt(flux[i]*header['INTTIME']*gain))/(gain*header['INTTIME'])
+        elif red2 == False:
+            errors_DNps = (np.sqrt(flux[i]*((header['NGROUP']-1)*header['TGROUP'])*gain))/(((header['NGROUP']-1)*header['TGROUP'])*gain)
+        else:
+            errors_DNps = (np.sqrt(flux[i]*(header['NGROUP']*header['TGROUP'])*gain))/((header['NGROUP']*header['TGROUP'])*gain)
+        
+        errors_normalized = errors_DNps/flux[i]
+        norm_error.append(errors_normalized)
+        hdu.close()
+    return norm_error
 
-    else:
-        if rf_slope == False: #slope1
-            for index, hdus in enumerate(hdu_filenames):    
-                hdu = fits.open(hdus)
-                header = hdu[0].header
-                errors_DNps = (np.sqrt(flux[index]*((header['NGROUP']-1)*header['TGROUP'])*gain))/(((header['NGROUP']-1)*header['TGROUP'])*gain)
-                errors_normalized = errors_DNps/flux
-                norm_error.append(errors_normalized)
-            return norm_error
-        else: #Slope2
-            for index, hdus in enumerate(hdu_filenames):    
-                hdu = fits.open(hdus)
-                header = hdu[0].header
-                errors_DNps = (np.sqrt(flux[index]*(header['NGROUP']*header['TGROUP'])*gain))/((header['NGROUP']*header['TGROUP'])*gain)
-                errors_normalized = errors_DNps/flux
-                norm_error.append(errors_normalized)
-            return norm_error
 
 
 
     
 
-def gen_center_g2d(center_x, center_y, box_width, amp, x_std, y_std, Theta, hdu_filenames, red_files = False, rf_slope = False):
+def gen_center_g2d(center_x, center_y, box_width, amp, x_std, y_std, Theta, hdu_filenames, red = False, red2 = False):
     
     """
-    gen_center_g2d prameters:
-        center_x = x coordinate of the circular aperture, type = float
-        center_y = y coordinate of the circular aperture, type = float
-        amp = amplitude of the gaussian.  Find from the projection curve along the center, type = float
-        x_std = Standard deviation of the Gaussian in x before rotating by theta, type = float
-        y_std = Standard deviation of the Gaussian in y before rotating by theta, type = float
-        Theta = Rotation angle in radians. The rotation angle increases counterclockwise, type = float
-        hdu_filenames = list of fits filenames (not the files themselves, just the names. i.e. strings), type = list
-    About the function: 
-        The function does a Gaussian fitting to your 2d data using your guess parameters and then uses the fitted value of those parameters to calculate centers of each image. It returns an array named 'separate_centers' that contain centers of each image. 
+    PARAMETERS:
+        center_x = x coordinate of the circular aperture; Type = float
+        center_y = y coordinate of the circular aperture; Type = float
+        amp = amplitude of the gaussian.  Find from the projection curve along the center; Type = float
+        x_std = Standard deviation of the Gaussian in x before rotating by theta; Type = float
+        y_std = Standard deviation of the Gaussian in y before rotating by theta; Type = float
+        Theta = Rotation angle in radians. The rotation angle increases counterclockwise; Type = float
+        hdu_filenames = list of fits filenames; Type = List [of strings]
+        red = Whether the files are .red files or not. Default value: "False"; Type = Boolean
+        red2 = Whether you want to use Slope2 method or not. Default value: "False"; Type = Boolean. 
+    
+    RETURNS:
+        seperate_centers =  Center of each image; Type = Array [of tuples]
+        x_values = x_value of center of each image; Type = Array
+        y_values = y_value of center of each image; Type = Array
     """
     x_values = []
     y_values = []
-    if red_files == False:
-        hdu = fits.open(hdu_filenames[2])
-        image = hdu[0].data
-        image2d = image[0]
-        y_pos, x_pos = np.mgrid[:image2d.shape[0],:image2d.shape[1]]
-        for hdus in hdu_filenames:
-            hdu = fits.open(hdus)
-            image = hdu[0].data
-            image2d = image[0]
-            fit_g = fitting.LevMarLSQFitter()
-            gauss2D = models.Gaussian2D(amplitude = amp, x_mean = center_x, y_mean = center_y, x_stddev = x_std, y_stddev = y_std, theta = Theta)
-            g = fit_g(gauss2D,x_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],y_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],image2d[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width])
-            g2 = fit_g(g,x_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],y_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],image2d[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width])
-            x_values.append(g2.x_mean)
-            y_values.append(g2.y_mean)
-            hdu.close()
-        separate_centers = zip(x_values,y_values)
     
-    #The code from here on is for red files
-    else: 
-        if rf_slope == False:
-            #creating slope1 images
-            image2d = []
-            for hdus in hdu_filenames:
-                hdu = fits.open(hdus)
-                image = hdu[0].data
-                header = hdu[0].header
-                slp_image = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
-                image2d.append(slp_image)
-        else:
-            #creating slope2 images
-            image2d = []
-            for hdus in hdu_filenames:
-                hdu = fits.open(hdus)
-                image = hdu[0].data
-                header = hdu[0].header
-                slp_image = image[-1]/(header['NGROUP']*header['TGROUP'])
-                image2d.append(slp_image)
-
-        #Doing the gaussian fitting
-        y_pos, x_pos = np.mgrid[:slp_image.shape[0],:slp_image.shape[1]]
-        for image in image2d:
-            fit_g = fitting.LevMarLSQFitter()
-            gauss2D = models.Gaussian2D(amplitude = amp, x_mean = center_x, y_mean = center_y, x_stddev = x_std, y_stddev = y_std, theta = Theta)
-            g = fit_g(gauss2D,x_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],
-                      y_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],
-                      image[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width])
-            g2 = fit_g(g,x_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],
-                       y_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],
-                       image[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width])
-            x_values.append(g2.x_mean)
-            y_values.append(g2.y_mean)
-        separate_centers = zip(x_values,y_values)    
+    #Generating slope images with different methods
+    for hdus in hdu_filenames:
+        hdu = fits.open(hdus)
+        image = hdu[0].data
+        header = hdu[0].header
+        
+        if red == False:          #.slp files
+            image2d = image[0] 
+        elif red2 == False:       #.red file, Slope1 method
+            image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
+        else:                     #.red file, Slope2 method
+            image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
+        
+        #Fitting a gaussian model to each image in image2d list and returning center
+        y_pos, x_pos = np.mgrid[:image2d.shape[0],:image2d.shape[1]]
+        fit_g = fitting.LevMarLSQFitter()
+        gauss2D = models.Gaussian2D(amplitude = amp, x_mean = center_x, y_mean = center_y, x_stddev = x_std, y_stddev = y_std, theta = Theta)
+        g = fit_g(gauss2D,x_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],y_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],image2d[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width])
+        g1 = fit_g(g,x_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],y_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],image2d[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width])
+        x_values.append(g1.x_mean)
+        y_values.append(g1.y_mean)
+    
+    #Results
+    separate_centers = zip(x_values,y_values) 
     return separate_centers, x_values, y_values
 
 
@@ -259,84 +213,58 @@ def gen_center_g2d(center_x, center_y, box_width, amp, x_std, y_std, Theta, hdu_
 
 
 
-def radius_testing(centers, r_src_low, r_src_up, r_src_inc, r_in_low, r_in_up, r_in_inc, r_out_low, r_out_up, r_out_inc, hdu_filenames, red_files = False, rf_slope = False):
+def radius_testing(centers, r_src_low, r_src_up, r_src_inc, r_in_low, r_in_up, r_in_inc, r_out_low, r_out_up, r_out_inc, hdu_filenames, red = False, red2 = False):
     """ 
-    radius_testing prameters:
-        centers = center of every image of your data set, type = array of tuples
-        r_src_low = lower limit of source radius (circular aperture radius) array, type = float 
-        r_src_up = upper limit of source radius (circular aperture radius) array, type = float
-        r_src_inc = increment of source radius (circular aperture radius) array, type = float
-        r_in parameters = Same as the r_src parameters, just for inner radius of annular apperture (this is for background subtraction)
-        r_out parameters = Same as the r_src parameters, just for outer radius of annular apperture (this is for background subtraction)
-        hdu_filenames = list of fits filenames (not the files themselves, just the names. i.e. strings), type = list
-        About the function: 
-        This function tests different radii to see which combination gives the least standard deviation. It prints the least standard deviation, the radii combination for which it occurs and return a table with table names: 'Median_Res_Flux','St_Dev', 'norm_stdev', 'r_source','r_in','r_out'.  
+    PARAMETERS:
+        centers = center of every image of your data set; Type = Array [of tuples]
+        r_src_low = lower limit of source radius (circular aperture radius) array; Type = float 
+        r_src_up = upper limit of source radius (circular aperture radius) array; Type = float
+        r_src_inc = increment of source radius (circular aperture radius) array; Type = float
+        r_in parameters = Same as the r_src parameters, just for inner radius of annular apperture (bkg sub)
+        r_out parameters = Same as the r_src parameters, just for outer radius of annular apperture (bkg sub)
+        hdu_filenames = list of fits filenames; Type = List [of strings]
+        red = Whether the files are .red files or not. Default value: "False"; Type = Boolean
+        red2 = Whether you want to use Slope2 method or not. Default value: "False"; Type = Boolean. 
+    
+    RETURNS: 
+        rad_test = column names: 'Median_Res_Flux','St_Dev', 'norm_stdev', 'r_source','r_in','r_out', 'rIn - r', 'rOut - rIn'; Type = Table  
     """
     r_source = np.arange(r_src_low,r_src_up,r_src_inc)
     r_inner = np.arange(r_in_low,r_in_up,r_in_inc)
     r_outer = np.arange(r_out_low,r_out_up,r_out_inc)
     flux_and_parameters = Table(names=('residual_aperture_sum', 'r_source', 'r_in','r_out'))
-    if red_files == False:
-        for index, hdus in enumerate(hdu_filenames):
-            hdu = fits.open(hdus)
-            image = hdu[0].data
-            image2d = image[0,:,:]
-            mask = np.isnan(image2d) == True
-            for r in r_source:
-                for r_in in r_inner:
-                    for r_out in r_outer:
-                        if (r<r_in) and (r<r_out) and (r_in<r_out):
-                            aperture = CircularAperture(centers[index], r)
-                            annular_apperture =CircularAnnulus(centers[index], r_in, r_out)
-                            rawflux_table = aperture_photometry(image2d, aperture, mask = mask)
-                            bkgflux_table = aperture_photometry(image2d, annular_apperture, mask = mask)
-                            phot_table = hstack([rawflux_table, bkgflux_table], table_names = ['raw','bkg'])
-                            bkg_mean = phot_table['aperture_sum_bkg']/annular_apperture.area()
-                            bkg_sum = bkg_mean*aperture.area()
-                            final_sum = phot_table['aperture_sum_raw'] - bkg_sum
-                            phot_table['residual_aperture_sum'] = final_sum
-                            flux_and_parameters.add_row([final_sum,r,r_in,r_out])
-                            
-    # The else block is the code for red files
-    else:
-        if rf_slope == False:
-            #creating slope images
-            image2d = []
-            for hdus in hdu_filenames:
-                hdu = fits.open(hdus)
-                image = hdu[0].data
-                header = hdu[0].header
-                slp_image = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
-                image2d.append(slp_image)
-        else:
-            #creating slope images
-            image2d = []
-            for hdus in hdu_filenames:
-                hdu = fits.open(hdus)
-                image = hdu[0].data
-                header = hdu[0].header
-                slp_image = image[-1]/(header['NGROUP']*header['TGROUP'])
-                image2d.append(slp_image)
-        #Doing the actual radius test
-        for index, image in enumerate(image2d):
-            mask = np.isnan(image) == True
-            for r in r_source:
-                for r_in in r_inner:
-                    for r_out in r_outer:
-                        if (r<r_in) and (r<r_out) and (r_in<r_out):
-                            aperture = CircularAperture(centers[index], r)
-                            annular_apperture =CircularAnnulus(centers[index], r_in, r_out)
-                            rawflux_table = aperture_photometry(image, aperture, mask = mask)
-                            bkgflux_table = aperture_photometry(image, annular_apperture, mask = mask)
-                            phot_table = hstack([rawflux_table, bkgflux_table], table_names = ['raw','bkg'])
-                            bkg_mean = phot_table['aperture_sum_bkg']/annular_apperture.area()
-                            bkg_sum = bkg_mean*aperture.area()
-                            final_sum = phot_table['aperture_sum_raw'] - bkg_sum
-                            phot_table['residual_aperture_sum'] = final_sum
-                            flux_and_parameters.add_row([final_sum,r,r_in,r_out])
-    
+    for index, hdus in enumerate(hdu_filenames):
+        hdu = fits.open(hdus)
+        image = hdu[0].data
+        header = hdu[0].header
+        
+        if red == False:          #.slp files
+            image2d = image[0] 
+        elif red2 == False:       #.red file, Slope1 method
+            image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
+        else:                     #.red file, Slope2 method
+            image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
+            
+        mask = np.isnan(image2d) == True
+        for r in r_source:
+            for r_in in r_inner:
+                for r_out in r_outer:
+                    if (r<r_in) and (r<r_out) and (r_in<r_out):
+                        aperture = CircularAperture(centers[index], r)
+                        annular_apperture =CircularAnnulus(centers[index], r_in, r_out)
+                        rawflux_table = aperture_photometry(image2d, aperture, mask = mask)
+                        bkgflux_table = aperture_photometry(image2d, annular_apperture, mask = mask)
+                        phot_table = hstack([rawflux_table, bkgflux_table], table_names = ['raw','bkg'])
+                        bkg_mean = phot_table['aperture_sum_bkg']/annular_apperture.area()
+                        bkg_sum = bkg_mean*aperture.area()
+                        final_sum = phot_table['aperture_sum_raw'] - bkg_sum
+                        phot_table['residual_aperture_sum'] = final_sum
+                        flux_and_parameters.add_row([final_sum,r,r_in,r_out])
+        hdu.close()
+
+       
     #Generating median flux and standard deviation at each r_source
-    s1 = Table(names=('Median_Res_Flux','St_Dev', 'norm_stdev', 'r_source','r_in','r_out', 'rIn - r', 'rOut - rIn'))
+    rad_test = Table(names=('Median_Res_Flux','St_Dev', 'norm_stdev', 'r_source','r_in','r_out', 'rIn - r', 'rOut - rIn'))
     for r in r_source:
         for r_in in r_inner:
             for r_out in r_outer:
@@ -345,21 +273,21 @@ def radius_testing(centers, r_src_low, r_src_up, r_src_inc, r_in_low, r_in_up, r
                     st_dev = np.std(flux_and_parameters["residual_aperture_sum"][indices])
                     median_flux = np.median(flux_and_parameters["residual_aperture_sum"][indices])
                     norm_stdev = st_dev/median_flux
-                    s1.add_row([median_flux,st_dev,norm_stdev,r,r_in,r_out,r_in-r,r_out-r_in])
+                    rad_test.add_row([median_flux,st_dev,norm_stdev,r,r_in,r_out,r_in-r,r_out-r_in])
     
     #Finding the best combination
-    r1 = s1['r_source']
-    r_in1 = s1['r_in']
-    r_out1 = s1['r_out']
-    min_std_dev = np.amin(s1['norm_stdev'])
-    best_r = r1[np.argmin(s1['norm_stdev'])]
-    best_r_in = r_in1[np.argmin(s1['norm_stdev'])]
-    best_r_out = r_out1[np.argmin(s1['norm_stdev'])]
+    r1 = rad_test['r_source']
+    r_in1 = rad_test['r_in']
+    r_out1 = rad_test['r_out']
+    min_std_dev = np.amin(rad_test['norm_stdev'])
+    best_r = r1[np.argmin(rad_test['norm_stdev'])]
+    best_r_in = r_in1[np.argmin(rad_test['norm_stdev'])]
+    best_r_out = r_out1[np.argmin(rad_test['norm_stdev'])]
     print "The minimum Standard deviation is %f" % min_std_dev
     print "It occurs for the radius r = %f" % best_r
     print "It occurs for the inner radius r_in = %f" % best_r_in
     print "It occurs for the outer radius r_out = %f" % best_r_out
-    return s1
+    return rad_test
     
     
     
@@ -368,165 +296,86 @@ def radius_testing(centers, r_src_low, r_src_up, r_src_inc, r_in_low, r_in_up, r
 
     
     
-def average_residual_flux(centers_a1, centers_b4, R, R_in, R_out, hdu_filenames, hdu_filenames_b4, red_files = False, rf_slope = False):
+def average_residual_flux(centers_a1, centers_b4, R, R_in, R_out, hdu_filenames, hdu_filenames_b4, red = False, red2 = False):
     
     """ 
-    average_residual_flux prameters:
-        center_a1 = center tuples of every image for 1st data set, type = array of tuples
-        center_b4 = center tuples of every image for 2nd data set, type = array of tuples
-        R = radius of circular aperture, type = float
-        R_in = radius of inner annular aperture, type = float
-        R_out = radius of outer annular aperture, type = float
-        hdu_filenames = list of fits filenames (not the files themselves, just the names. i.e. strings), type = list
-        hdu_filenames_b4 = list of fits filenames [2nd dataset] (not the files themselves, just the names. i.e. strings), type = list
-    About the function: 
-        The function uses circular aperture & annular aperture to calculate the average [raw flux, bkg flux, res flux] of each image from 2 different data sets provided to it. It then calculates the time from each image's metadata & averages them from botha data sets. It finally creates a table with column names: 'a1_b4_raw_flux', 'a1_b4_bkg_flux', 'a1_res_flux', 'b4_res_flux', 'a1_b4_res_flux' and 'Time' of length = number of files given to the function.                    
+    PARAMETERS:
+        center_a1 = center tuples of every image for 1st data set, Type = Array [of tuples]
+        center_b4 = center tuples of every image for 2nd data set, Type = Array [of tuples]
+        R = radius of circular aperture, Type = Float
+        R_in = radius of inner annular aperture, Type = Float
+        R_out = radius of outer annular aperture, Type = Float
+        hdu_filenames = list of fits filenames; Type = List [of strings]
+        hdu_filenames_b4 = list of fits filenames (2nd set); Type = List [of strings]
+        red = Whether the files are .red files or not. Default value: "False"; Type = Boolean
+        red2 = Whether you want to use Slope2 method or not. Default value: "False"; Type = Boolean. 
+        
+    RETURNS: 
+        a1_b4_flux = column names: 'a1_b4_raw_flux', 'a1_b4_bkg_flux', 'a1_res_flux', 'b4_res_flux', 'a1_b4_res_flux', 'Time'; Type = Table                    
     """
 
     a1_b4_flux = Table(names=('a1_b4_raw_flux','a1_b4_bkg_flux','a1_res_flux','b4_res_flux','a1_b4_res_flux','Time'))
-    if red_files == False:
-        for index, (hdus, hdus_b4) in enumerate(zip(hdu_filenames, hdu_filenames_b4)):
-            # opening, slicing and creating mask for a1 data
-            hdu = fits.open(hdus)
-            header = hdu[0].header
-            time = (header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)
-            image = hdu[0].data
-            image2d = image[0,:,:]
-            mask_a1 = np.isnan(image2d) == True
-            # opening, slicing and creating mask for b4 data
-            hdu_b4 = fits.open(hdus_b4)
-            header_b4 = hdu_b4[0].header
-            time_b4 = (header_b4["NGROUP"] + 1) * header_b4["TGROUP"] * (header_b4["ON_NINT"] - 1)
-            image_b4 = hdu_b4[0].data
-            image2d_b4 = image_b4[0,:,:]
-            mask_b4 = np.isnan(image2d_b4) == True
-            # Defining circular & annular aperture for a1 data
-            aperture_a1 = CircularAperture(centers_a1[index], r = R)
-            annular_apperture_a1 =CircularAnnulus(centers_a1[index], r_in = R_in, r_out = R_out)
-            # Defining circular & annular aperture for b4 data
-            aperture_b4 = CircularAperture(centers_b4[index], r = R)
-            annular_apperture_b4 =CircularAnnulus(centers_b4[index], r_in = R_in, r_out = R_out)
-            # Photometric analysis of a1 data
-            rawflux_table_a1 = aperture_photometry(image2d, aperture_a1, mask = mask_a1)
-            bkgflux_table_a1 = aperture_photometry(image2d, annular_apperture_a1, mask = mask_a1)
-            phot_table_a1 = hstack([rawflux_table_a1, bkgflux_table_a1], table_names = ['raw','bkg'])
-            bkg_mean_a1 = phot_table_a1['aperture_sum_bkg']/annular_apperture_a1.area()
-            bkg_sum_a1 = bkg_mean_a1*aperture_a1.area()
-            final_sum_a1 = phot_table_a1['aperture_sum_raw'] - bkg_sum_a1
-            phot_table_a1['residual_aperture_sum'] = final_sum_a1
-            # Photometric analysis of b4 data
-            rawflux_table_b4 = aperture_photometry(image2d_b4, aperture_b4, mask = mask_b4)
-            bkgflux_table_b4 = aperture_photometry(image2d_b4, annular_apperture_b4, mask = mask_b4)
-            phot_table_b4 = hstack([rawflux_table_b4, bkgflux_table_b4], table_names = ['raw','bkg'])
-            bkg_mean_b4 = phot_table_b4['aperture_sum_bkg']/annular_apperture_b4.area()
-            bkg_sum_b4 = bkg_mean_b4*aperture_b4.area()
-            final_sum_b4 = phot_table_b4['aperture_sum_raw'] - bkg_sum_b4
-            phot_table_b4['residual_aperture_sum'] = final_sum_b4
-            # Fixing Table columns
-            average_time = [(time + time_b4)/2] 
-            a = (phot_table_a1[0][0] + phot_table_b4[0][0])/2
-            b = (phot_table_a1[0][3] + phot_table_b4[0][3])/2
-            c = phot_table_a1[0][6]
-            d = phot_table_b4[0][6]
-            e = (phot_table_a1[0][6] + phot_table_b4[0][6])/2
-            f = average_time
-            a1_b4_flux.add_row([a,b,c,d,e,f])
-            hdu.close()
-            hdu_b4.close()
+    
+    for index, (hdus, hdus_b4) in enumerate(zip(hdu_filenames, hdu_filenames_b4)):
+        #a1
+        hdu = fits.open(hdus)
+        image = hdu[0].data
+        header = hdu[0].header
+        #b4
+        hdu_b4 = fits.open(hdus_b4)
+        image_b4 = hdu_b4[0].data
+        header_b4 = hdu_b4[0].header
+        
+        if red == False:          #.slp files
+            image2d = image[0]
+            image2d_b4 = image_b4[0]
+        elif red2 == False:       #.red file, Slope1 method
+            image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
+            image2d_b4 = (image_b4[-1] - image_b4[0])/((header_b4['NGROUP']-1)*header_b4['TGROUP'])
+        else:                     #.red file, Slope2 method
+            image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
+            image2d_b4 = image_b4[-1]/(header_b4['NGROUP']*header_b4['TGROUP'])
+    
+        # Calculating time & creating mask for a1 data
+        time = (header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)
+        mask_a1 = np.isnan(image2d) == True
+        # opening, slicing and creating mask for b4 data
+        time_b4 = (header_b4["NGROUP"] + 1) * header_b4["TGROUP"] * (header_b4["ON_NINT"] - 1)
+        mask_b4 = np.isnan(image2d_b4) == True
+        # Defining circular & annular aperture for a1 data
+        aperture_a1 = CircularAperture(centers_a1[index], r = R)
+        annular_apperture_a1 =CircularAnnulus(centers_a1[index], r_in = R_in, r_out = R_out)
+        # Defining circular & annular aperture for b4 data
+        aperture_b4 = CircularAperture(centers_b4[index], r = R)
+        annular_apperture_b4 =CircularAnnulus(centers_b4[index], r_in = R_in, r_out = R_out)
+        # Photometric analysis of a1 data
+        rawflux_table_a1 = aperture_photometry(image2d, aperture_a1, mask = mask_a1)
+        bkgflux_table_a1 = aperture_photometry(image2d, annular_apperture_a1, mask = mask_a1)
+        phot_table_a1 = hstack([rawflux_table_a1, bkgflux_table_a1], table_names = ['raw','bkg'])
+        bkg_mean_a1 = phot_table_a1['aperture_sum_bkg']/annular_apperture_a1.area()
+        bkg_sum_a1 = bkg_mean_a1*aperture_a1.area()
+        final_sum_a1 = phot_table_a1['aperture_sum_raw'] - bkg_sum_a1
+        phot_table_a1['residual_aperture_sum'] = final_sum_a1
+        # Photometric analysis of b4 data
+        rawflux_table_b4 = aperture_photometry(image2d_b4, aperture_b4, mask = mask_b4)
+        bkgflux_table_b4 = aperture_photometry(image2d_b4, annular_apperture_b4, mask = mask_b4)
+        phot_table_b4 = hstack([rawflux_table_b4, bkgflux_table_b4], table_names = ['raw','bkg'])
+        bkg_mean_b4 = phot_table_b4['aperture_sum_bkg']/annular_apperture_b4.area()
+        bkg_sum_b4 = bkg_mean_b4*aperture_b4.area()
+        final_sum_b4 = phot_table_b4['aperture_sum_raw'] - bkg_sum_b4
+        phot_table_b4['residual_aperture_sum'] = final_sum_b4
+        # Fixing Table columns
+        average_time = [(time + time_b4)/2] 
+        a = (phot_table_a1[0][0] + phot_table_b4[0][0])/2
+        b = (phot_table_a1[0][3] + phot_table_b4[0][3])/2
+        c = phot_table_a1[0][6]
+        d = phot_table_b4[0][6]
+        e = (phot_table_a1[0][6] + phot_table_b4[0][6])/2
+        f = average_time
+        a1_b4_flux.add_row([a,b,c,d,e,f])
+        hdu.close()
+        hdu_b4.close()
 
-    else:
-        #creating slope images
-        image2d_a1 = []
-        image2d_b4 = []
-        time_a1 = []
-        time_b4 = []
-        mask_a1 = []
-        mask_b4 = []
-        if rf_slope == False:
-            for (hdus_a1, hdus_b4) in zip(hdu_filenames, hdu_filenames_b4):
-                # creating a1 slope images & variables
-                hdu_a1 = fits.open(hdus_a1)
-                image_a1 = hdu_a1[0].data
-                header_a1 = hdu_a1[0].header
-                slp_image_a1 = (image_a1[-1] - image_a1[0])/((header_a1['NGROUP']-1)*header_a1['TGROUP'])
-                image2d_a1.append(slp_image_a1)
-                # Defining a1 time
-                time1 = (header_a1["NGROUP"] + 1) * header_a1["TGROUP"] * (header_a1["ON_NINT"] - 1)
-                time_a1.append(time1)
-                # Creating a1 masks
-                mask1 = np.isnan(slp_image_a1) == True
-                mask_a1.append(mask1)
-                ## creating b4 slope images  & variables
-                hdu_b4 = fits.open(hdus_b4)
-                image_b4 = hdu_b4[0].data
-                header_b4 = hdu_b4[0].header
-                slp_image_b4 = (image_b4[-1] - image_b4[0])/((header_b4['NGROUP']-1)*header_b4['TGROUP'])
-                image2d_b4.append(slp_image_b4)
-                # Defining b4 time
-                time2 = (header_b4["NGROUP"] + 1) * header_b4["TGROUP"] * (header_b4["ON_NINT"] - 1)
-                time_b4.append(time2)
-                # Creating b4 masks
-                mask2 = np.isnan(slp_image_b4) == True
-                mask_b4.append(mask2)
-        else:
-            for (hdus_a1, hdus_b4) in zip(hdu_filenames, hdu_filenames_b4):
-                # creating a1 slope images & variables
-                hdu_a1 = fits.open(hdus_a1)
-                image_a1 = hdu_a1[0].data
-                header_a1 = hdu_a1[0].header
-                slp_image_a1 = image_a1[-1]/(header_a1['NGROUP']*header_a1['TGROUP'])
-                image2d_a1.append(slp_image_a1)
-                # Defining a1 time
-                time1 = (header_a1["NGROUP"] + 1) * header_a1["TGROUP"] * (header_a1["ON_NINT"] - 1)
-                time_a1.append(time1)
-                # Creating a1 masks
-                mask1 = np.isnan(slp_image_a1) == True
-                mask_a1.append(mask1)
-                ## creating b4 slope images  & variables
-                hdu_b4 = fits.open(hdus_b4)
-                image_b4 = hdu_b4[0].data
-                header_b4 = hdu_b4[0].header
-                slp_image_b4 = image_b4[-1]/(header_b4['NGROUP']*header_b4['TGROUP'])
-                image2d_b4.append(slp_image_b4)
-                # Defining b4 time
-                time2 = (header_b4["NGROUP"] + 1) * header_b4["TGROUP"] * (header_b4["ON_NINT"] - 1)
-                time_b4.append(time2)
-                # Creating b4 masks
-                mask2 = np.isnan(slp_image_b4) == True
-                mask_b4.append(mask2)
-
-        for index, (image1, image2) in enumerate(zip(image2d_a1, image2d_b4)):
-            # Defining circular & annular aperture for a1 data
-            aperture_a1 = CircularAperture(centers_a1[index], r = R)
-            annular_apperture_a1 =CircularAnnulus(centers_a1[index], r_in = R_in, r_out = R_out)
-            # Defining circular & annular aperture for b4 data
-            aperture_b4 = CircularAperture(centers_b4[index], r = R)
-            annular_apperture_b4 =CircularAnnulus(centers_b4[index], r_in = R_in, r_out = R_out)
-            # Photometric analysis of a1 data
-            rawflux_table_a1 = aperture_photometry(image1, aperture_a1, mask = mask_a1[index])
-            bkgflux_table_a1 = aperture_photometry(image1, annular_apperture_a1, mask = mask_a1[index])
-            phot_table_a1 = hstack([rawflux_table_a1, bkgflux_table_a1], table_names = ['raw','bkg'])
-            bkg_mean_a1 = phot_table_a1['aperture_sum_bkg']/annular_apperture_a1.area()
-            bkg_sum_a1 = bkg_mean_a1*aperture_a1.area()
-            final_sum_a1 = phot_table_a1['aperture_sum_raw'] - bkg_sum_a1
-            phot_table_a1['residual_aperture_sum'] = final_sum_a1
-            # Photometric analysis of b4 data
-            rawflux_table_b4 = aperture_photometry(image2, aperture_b4, mask = mask_b4[index])
-            bkgflux_table_b4 = aperture_photometry(image2, annular_apperture_b4, mask = mask_b4[index])
-            phot_table_b4 = hstack([rawflux_table_b4, bkgflux_table_b4], table_names = ['raw','bkg'])
-            bkg_mean_b4 = phot_table_b4['aperture_sum_bkg']/annular_apperture_b4.area()
-            bkg_sum_b4 = bkg_mean_b4*aperture_b4.area()
-            final_sum_b4 = phot_table_b4['aperture_sum_raw'] - bkg_sum_b4
-            phot_table_b4['residual_aperture_sum'] = final_sum_b4
-            # Fixing Table columns
-            average_time = [(time_a1[index] + time_b4[index])/2] 
-            a = (phot_table_a1[0][0] + phot_table_b4[0][0])/2
-            b = (phot_table_a1[0][3] + phot_table_b4[0][3])/2
-            c = phot_table_a1[0][6]
-            d = phot_table_b4[0][6]
-            e = (phot_table_a1[0][6] + phot_table_b4[0][6])/2
-            f = average_time
-            a1_b4_flux.add_row([a,b,c,d,e,f])
     return a1_b4_flux
 
 
@@ -540,16 +389,21 @@ def average_residual_flux(centers_a1, centers_b4, R, R_in, R_out, hdu_filenames,
 def linear_bestfit(x, y, slope_guess, intercept_guess, show_plot = False, x_err = None, y_err = None, style = None):
     
     """ 
-    linear_bestfit prameters:
-        x = x data of your plot. i.e. the time array, type = array
-        y = y data of your plot. i.e. the residual flux array, type = array
-        x_err = set of errors in the x direction, type = array
-        y_err = set of errors in the y direction, type = array
-        slope_guess = guess slope of best fit line, type = float
-        intercept_guess = guess intercept of bet fit line,  type = float
-        style = fmt. ie. the color and style of your curve, type = string
-    About the function: 
-        This function does a linear best fit to your data distribution and returns the detrended flux data in the form of an array.
+    PARAMETERS:
+        x = x data of your plot. i.e. the time array; Type = Array
+        y = y data of your plot. i.e. the residual flux array; Type = Array
+        slope_guess = guess slope of best fit line; Type = Float
+        intercept_guess = guess intercept of best fit line; Type = Float
+        show_plot = If you want a plot of the time_series. Default value: "False"; Type = Boolean
+        x_err = set of errors in the x direction. Default value: "None"; Type = Array
+        y_err = set of errors in the y direction. Default value: "None"; Type = Array
+        style = fmt. ie. the color and style of your curve. Default value: "None"; Type = String
+        
+    RETURNS: 
+        detrended_flux_data = Flux data after applying linear model. Type = Array
+        If show_plot = true, then:
+        plot1 = Normalized Data With Linear Best Fit
+        plot2 = Detrended Time Series
     """
     if show_plot == False:
         norm_y = y/np.median(y)
