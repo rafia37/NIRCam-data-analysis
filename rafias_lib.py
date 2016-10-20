@@ -1,6 +1,6 @@
 from astropy.io import fits
 from astropy.table import Table, Column, hstack
-from photutils import CircularAperture, CircularAnnulus, aperture_photometry
+from photutils import CircularAperture, RectangularAperture, CircularAnnulus, aperture_photometry
 from astropy.modeling import models, fitting
 import numpy as np
 import pdb
@@ -10,53 +10,146 @@ import matplotlib.pyplot as plt
 
 
 
-def time_series(center_x, center_y, radius, hdu_filenames, red = False, red2 = False):
+
+
+
+def test_image(filename, r = False, r2 = False, f_name = False):
+    hdu = fits.open(filename)
+    image = hdu[0].data
+    header = hdu[0].header
+    hdu.close()
     
-    """ 
-    PARAMETERS:
-        center_x = x coordinate of the circular aperture; Type = Float
-        center_y = y coordinate of the circular aperture; Type = Float
-        radius = radius of circular aperture; Type = Float
-        hdu_filenames = list of fits filenames, type = list [of strings]
-        red = Whether the files are .red files or not. Default value: "False"; type = Boolean
-        red2 = Whether you want to use Slope2 method or not. Default value: "False"; type = Boolean. 
-        
-    RETURNS: 
-        single_rad_data = column names: "Flux", "Time"; Type = Table
-                       
-    """
-    
-    single_rad_data = Table(names=('Flux','Time'))
-    
-    for hdus in hdu_filenames:
-        hdu = fits.open(hdus)
-        image = hdu[0].data
-        header = hdu[0].header
-        
-        if red == False:          #.slp files
-            image2d = image[0] 
-        elif red2 == False:       #.red file, Slope1 method
+    if f_name != False:
+        flat_file = fits.open(f_name)
+        flat = flat_file[1].data
+        flat_file.close()
+
+    if r == False:          #.slp files
+        image2d = image[0]
+    elif r2 == False:       #.red file, Slope1 method
+        if f_name != False:
+            slope = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
+            image2d = slope/flat
+        else:
             image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
-        else:                     #.red file, Slope2 method
+    else:                     #.red file, Slope2 method
+        if f_name != False:
+            slope = image[-1]/(header['NGROUP']*header['TGROUP'])
+            image2d = slope/flat
+        else:
             image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
             
-        mask = np.isnan(image2d) == True
-        aperture = CircularAperture((center_x,center_y), r = radius)
-        phot_table = aperture_photometry(image2d, aperture, mask = mask)
-        header = hdu[0].header
-        time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
-        a = [phot_table[0][0]]
-        b = time
-        single_rad_data.add_row([a,b])
-        hdu.close()
-    return single_rad_data
-   
+    mask = np.isnan(image2d) == True
+    time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
     
+    return image2d, time, header, mask
 
 
 
 
-def light_curve(x, y, x_err = None, y_err = None, style = None, lbl = None):
+
+
+def photometry(image2d, cen_x, cen_y, mask, index = None, shape = 'Circ', rad = None, ht = None, wid = None, ang = None):
+    if type(cen_x) == float:
+        if shape == 'Circ':
+            aperture = CircularAperture((cen_x, cen_y), r = rad)
+        elif shape == 'Rect':
+            aperture = RectangularAperture((cen_x, cen_y), w = wid, h = ht, theta = ang)
+    else:
+        if shape == 'Circ':
+            aperture = CircularAperture((cen_x[index], cen_y[index]), r = rad)
+        elif shape == 'Rect':
+            aperture = RectangularAperture((cen_x[index], cen_y[index]), w = wid, h = ht, theta = ang)
+            
+    phot_table = aperture_photometry(image2d, aperture, mask = mask)
+    flux = phot_table[0][0]
+    return flux, aperture
+
+
+
+
+
+
+
+def time_series(xcenter, ycenter, filenames, r, r_in, r_out, flat_name = False, w = None, h = None, w_in = None, w_out = None, h_out = None, red = False, red2 = False, mode = "astropy", src_shape = "Circ", bkg_shape = "Circ", average = "med"):
+
+    flux_table = Table(names = ('raw_flux', 'bkg_flux', 'res_flux', 'time'))
+    
+    for i, hdu in enumerate(filenames):
+        test_im = test_image(filename = hdu, r = red, r2 = red2, f_name = flat_name)
+        image2d, time, header, mask = test_im[0], test_im[1], test_im[2], test_im[3]
+        ap_phot = photometry(image2d, xcenter, ycenter, mask, index = i, shape = src_shape, rad = r, wid = w, ht = h)
+        raw_flux = ap_phot[0]
+        source_ap = ap_phot[1]
+       
+        
+        if mode == "astropy":
+            if bkg_shape == "Circ":
+                bkg_ap = CircularAnnulus((xcenter[i], ycenter[i]), r_in = r_in, r_out = r_out)
+                bkg = aperture_photometry(image2d, bkg_ap, mask = mask)
+                bkg_mean = bkg['aperture_sum']/bkg_ap.area()
+                bkg_flux = bkg_mean*source_ap.area()
+                res_flux = raw_flux - bkg_flux
+            if bkg_shape == "Rect":
+                bkg_ap = RectangularAnnulus((xcenter[i], ycenter[i]), w_in = w_in, w_out = w_out, h_out = h_out, 
+                                                   theta = 0.0)
+                bkg = aperture_photometry(image2d, bkg_ap, mask = mask)
+                bkg_mean = bkg/bkg_apperture.area()
+                bkg_flux = bkg_mean*source_ap.area()
+                res_flux = raw_flux - bkg_flux
+                
+
+        elif mode == "rl":
+            y, x = np.mgrid[:image2d.shape[0], :image2d.shape[1]]
+            if bkg_shape == "Circ":
+                bkg_pts = ((((x - xcenter[i])**2 + (y - ycenter[i])**2) > (r_in)**2) & 
+                               (((x - xcenter[i])**2 + (y -ycenter[i])**2) < (r_out)**2))
+            elif bkg_shape == "CIS":
+                bkg_pts = ((((x - xcenter[i])**2 + (y - ycenter[i])**2) > (r_in)**2) & 
+                               ((np.abs(x - xcenter[i]) < r_out) & (np.abs(y -ycenter[i]) < r_out)))
+            else:
+                print "Not a recognized shape"
+
+            if average == "med":
+                bkg_med = np.nanmedian(image2d[bkg_pts])
+            elif average == "avg":
+                bkg_med = np.nanmean(image2d[bkg_pts])
+            elif average =="mad":
+                ad = np.abs(image2d[bkg_pts]-np.nanmedian(image2d[bkg_pts]))
+                mad = np.nanmedian(ad)
+                keep_pts = (np.abs(image2d-np.nanmedian(image2d[bkg_pts]))<(5*mad)) & bkg_pts
+                bkg_med = np.nanmean(image2d[keep_pts])
+
+            bkg_flux = bkg_med*(np.pi*(r**2))
+            res_flux = raw_flux - bkg_flux
+        
+        flux_table.add_row([raw_flux, bkg_flux, res_flux, time])
+
+    return flux_table
+
+
+
+
+
+    """flux_data = Table(names=('Flux','Time'))
+    
+    for index, hdus in enumerate(hdu_filenames):
+        image2d = test_image(filename = hdus, r = red, r2 = red2)[0]
+        header = test_image(filename = hdus, r = red, r2 = red2)[1]
+        mask = np.isnan(image2d) == True
+        flux = photometry(image2d, center_x, center_y, mask, index, shape, radius, height, width, angle)
+        time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
+        flux_data.add_row([flux, time])
+    return flux_data"""
+
+
+
+
+
+
+
+
+def light_curve(x, y, x_err = None, y_err = None, style = 'r.-', lbl = None):
     
     """ 
     PARAMETERS:
@@ -64,7 +157,7 @@ def light_curve(x, y, x_err = None, y_err = None, style = None, lbl = None):
         y = y data of your plot. i.e. the flux array; Type = Array
         x_err = set of errors in the x direction. Default value = "None"; Type = Array
         y_err = set of errors in the y direction. Default value = "None"; Type = Array
-        style = fmt. ie. the color and style of your curve. Default value = "None"; Type = String
+        style = fmt. ie. the color and style of your curve. Default value = "r.-"; Type = String
         lbl = Label for the plot. Default value = "None"; Type = String
         
     RETURNS: 
@@ -158,7 +251,7 @@ def norm_flux_error(flux, gain, hdu_filenames, red = False, red2 = False):
 
     
 
-def gen_center_g2d(center_x, center_y, box_width, amp, x_std, y_std, Theta, hdu_filenames, red = False, red2 = False):
+def gen_center_g2d(center_x, center_y, box_width, amp, x_std, y_std, Theta, hdu_filenames, red = False, red2 = False, flat_name = False):
     
     """
     PARAMETERS:
@@ -178,22 +271,11 @@ def gen_center_g2d(center_x, center_y, box_width, amp, x_std, y_std, Theta, hdu_
         y_values = y_value of center of each image; Type = Array
     """
     x_values = []
-    y_values = []
-    
-    #Generating slope images with different methods
-    for hdus in hdu_filenames:
-        hdu = fits.open(hdus)
-        image = hdu[0].data
-        header = hdu[0].header
+    y_values = []        
         
-        if red == False:          #.slp files
-            image2d = image[0] 
-        elif red2 == False:       #.red file, Slope1 method
-            image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
-        else:                     #.red file, Slope2 method
-            image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
-        
-        #Fitting a gaussian model to each image in image2d list and returning center
+    #Fitting a gaussian model to each image in image2d list and returning center    
+    for index, hdus in enumerate(hdu_filenames):
+        image2d = test_image(filename = hdus, r = red, r2 = red2, f_name = flat_name)[0]
         y_pos, x_pos = np.mgrid[:image2d.shape[0],:image2d.shape[1]]
         fit_g = fitting.LevMarLSQFitter()
         gauss2D = models.Gaussian2D(amplitude = amp, x_mean = center_x, y_mean = center_y, x_stddev = x_std, y_stddev = y_std, theta = Theta)
@@ -234,18 +316,8 @@ def radius_testing(centers, r_src_low, r_src_up, r_src_inc, r_in_low, r_in_up, r
     r_outer = np.arange(r_out_low,r_out_up,r_out_inc)
     flux_and_parameters = Table(names=('residual_aperture_sum', 'r_source', 'r_in','r_out'))
     for index, hdus in enumerate(hdu_filenames):
-        hdu = fits.open(hdus)
-        image = hdu[0].data
-        header = hdu[0].header
-        
-        if red == False:          #.slp files
-            image2d = image[0] 
-        elif red2 == False:       #.red file, Slope1 method
-            image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
-        else:                     #.red file, Slope2 method
-            image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
-            
-        mask = np.isnan(image2d) == True
+        image2d = test_image(filename = hdus, r = red, r2 = red2)[0]    
+        mask = test_image(filename = hdus, r = red, r2 = red2)[3]
         for r in r_source:
             for r_in in r_inner:
                 for r_out in r_outer:
@@ -260,7 +332,6 @@ def radius_testing(centers, r_src_low, r_src_up, r_src_inc, r_in_low, r_in_up, r
                         final_sum = phot_table['aperture_sum_raw'] - bkg_sum
                         phot_table['residual_aperture_sum'] = final_sum
                         flux_and_parameters.add_row([final_sum,r,r_in,r_out])
-        hdu.close()
 
        
     #Generating median flux and standard deviation at each r_source
@@ -296,93 +367,6 @@ def radius_testing(centers, r_src_low, r_src_up, r_src_inc, r_in_low, r_in_up, r
 
     
     
-def average_residual_flux(centers_a1, centers_b4, R, R_in, R_out, hdu_filenames, hdu_filenames_b4, red = False, red2 = False):
-    
-    """ 
-    PARAMETERS:
-        center_a1 = center tuples of every image for 1st data set, Type = Array [of tuples]
-        center_b4 = center tuples of every image for 2nd data set, Type = Array [of tuples]
-        R = radius of circular aperture, Type = Float
-        R_in = radius of inner annular aperture, Type = Float
-        R_out = radius of outer annular aperture, Type = Float
-        hdu_filenames = list of fits filenames; Type = List [of strings]
-        hdu_filenames_b4 = list of fits filenames (2nd set); Type = List [of strings]
-        red = Whether the files are .red files or not. Default value: "False"; Type = Boolean
-        red2 = Whether you want to use Slope2 method or not. Default value: "False"; Type = Boolean. 
-        
-    RETURNS: 
-        a1_b4_flux = column names: 'a1_b4_raw_flux', 'a1_b4_bkg_flux', 'a1_res_flux', 'b4_res_flux', 'a1_b4_res_flux', 'Time'; Type = Table                    
-    """
-
-    a1_b4_flux = Table(names=('a1_b4_raw_flux','a1_b4_bkg_flux','a1_res_flux','b4_res_flux','a1_b4_res_flux','Time'))
-    
-    for index, (hdus, hdus_b4) in enumerate(zip(hdu_filenames, hdu_filenames_b4)):
-        #a1
-        hdu = fits.open(hdus)
-        image = hdu[0].data
-        header = hdu[0].header
-        #b4
-        hdu_b4 = fits.open(hdus_b4)
-        image_b4 = hdu_b4[0].data
-        header_b4 = hdu_b4[0].header
-        
-        if red == False:          #.slp files
-            image2d = image[0]
-            image2d_b4 = image_b4[0]
-        elif red2 == False:       #.red file, Slope1 method
-            image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
-            image2d_b4 = (image_b4[-1] - image_b4[0])/((header_b4['NGROUP']-1)*header_b4['TGROUP'])
-        else:                     #.red file, Slope2 method
-            image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
-            image2d_b4 = image_b4[-1]/(header_b4['NGROUP']*header_b4['TGROUP'])
-    
-        # Calculating time & creating mask for a1 data
-        time = (header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)
-        mask_a1 = np.isnan(image2d) == True
-        # opening, slicing and creating mask for b4 data
-        time_b4 = (header_b4["NGROUP"] + 1) * header_b4["TGROUP"] * (header_b4["ON_NINT"] - 1)
-        mask_b4 = np.isnan(image2d_b4) == True
-        # Defining circular & annular aperture for a1 data
-        aperture_a1 = CircularAperture(centers_a1[index], r = R)
-        annular_apperture_a1 =CircularAnnulus(centers_a1[index], r_in = R_in, r_out = R_out)
-        # Defining circular & annular aperture for b4 data
-        aperture_b4 = CircularAperture(centers_b4[index], r = R)
-        annular_apperture_b4 =CircularAnnulus(centers_b4[index], r_in = R_in, r_out = R_out)
-        # Photometric analysis of a1 data
-        rawflux_table_a1 = aperture_photometry(image2d, aperture_a1, mask = mask_a1)
-        bkgflux_table_a1 = aperture_photometry(image2d, annular_apperture_a1, mask = mask_a1)
-        phot_table_a1 = hstack([rawflux_table_a1, bkgflux_table_a1], table_names = ['raw','bkg'])
-        bkg_mean_a1 = phot_table_a1['aperture_sum_bkg']/annular_apperture_a1.area()
-        bkg_sum_a1 = bkg_mean_a1*aperture_a1.area()
-        final_sum_a1 = phot_table_a1['aperture_sum_raw'] - bkg_sum_a1
-        phot_table_a1['residual_aperture_sum'] = final_sum_a1
-        # Photometric analysis of b4 data
-        rawflux_table_b4 = aperture_photometry(image2d_b4, aperture_b4, mask = mask_b4)
-        bkgflux_table_b4 = aperture_photometry(image2d_b4, annular_apperture_b4, mask = mask_b4)
-        phot_table_b4 = hstack([rawflux_table_b4, bkgflux_table_b4], table_names = ['raw','bkg'])
-        bkg_mean_b4 = phot_table_b4['aperture_sum_bkg']/annular_apperture_b4.area()
-        bkg_sum_b4 = bkg_mean_b4*aperture_b4.area()
-        final_sum_b4 = phot_table_b4['aperture_sum_raw'] - bkg_sum_b4
-        phot_table_b4['residual_aperture_sum'] = final_sum_b4
-        # Fixing Table columns
-        average_time = [(time + time_b4)/2] 
-        a = (phot_table_a1[0][0] + phot_table_b4[0][0])/2
-        b = (phot_table_a1[0][3] + phot_table_b4[0][3])/2
-        c = phot_table_a1[0][6]
-        d = phot_table_b4[0][6]
-        e = (phot_table_a1[0][6] + phot_table_b4[0][6])/2
-        f = average_time
-        a1_b4_flux.add_row([a,b,c,d,e,f])
-        hdu.close()
-        hdu_b4.close()
-
-    return a1_b4_flux
-
-
-
-
-
-
 
 
 
