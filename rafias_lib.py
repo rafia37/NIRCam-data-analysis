@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 
 
-def test_image(filename, r = False, r2 = False, f_name = False):
+def test_image(filename, r = False, r2 = False, f_name = False, Time = True):
     hdu = fits.open(filename)
     image = hdu[0].data
     header = hdu[0].header
@@ -23,7 +23,7 @@ def test_image(filename, r = False, r2 = False, f_name = False):
         flat_file = fits.open(f_name)
         flat = flat_file[1].data
         flat_file.close()
-
+    """
     if r == False:          #.slp files
         image2d = image[0]
     elif r2 == False:       #.red file, Slope1 method
@@ -38,9 +38,26 @@ def test_image(filename, r = False, r2 = False, f_name = False):
             image2d = slope/flat
         else:
             image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
-            
+    """   
+    if r == False:          #.slp files
+        image2d = image[0]
+    elif r2 == False:       #.red file, Slope1 method
+        if f_name != False:
+            slope = (image[-1] - image[0])/((header['NGROUP']-1)*header['TFRAME']*header['NFRAME'])
+            image2d = slope/flat
+        else:
+            image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TFRAME']*header['NFRAME'])
+    else:                     #.red file, Slope2 method
+        if f_name != False:
+            slope = image[-1]/(header['NGROUP']*header['TFRAME']*header['NFRAME'])
+            image2d = slope/flat
+        else:
+            image2d = image[-1]/(header['NGROUP']*header['TFRAME']*header['NFRAME'])
     mask = np.isnan(image2d) == True
-    time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
+    if Time == True:
+        time = [(header["NGROUP"] + 1) * header['TGROUP']* (header["ON_NINT"] - 1)]
+    else:
+        time = 0.0
     
     return image2d, time, header, mask
 
@@ -49,7 +66,7 @@ def test_image(filename, r = False, r2 = False, f_name = False):
 
 
 
-def photometry(image2d, cen_x, cen_y, mask, index = None, shape = 'Circ', rad = None, ht = None, wid = None, ang = None):
+def photometry(image2d, cen_x, cen_y, mask, index = None, shape = 'Circ', rad = None, ht = None, wid = None, ang = 0.0):
     if type(cen_x) == float:
         if shape == 'Circ':
             aperture = CircularAperture((cen_x, cen_y), r = rad)
@@ -71,7 +88,7 @@ def photometry(image2d, cen_x, cen_y, mask, index = None, shape = 'Circ', rad = 
 
 
 
-def time_series(xcenter, ycenter, filenames, r, r_in, r_out, flat_name = False, w = None, h = None, w_in = None, w_out = None, h_out = None, red = False, red2 = False, mode = "astropy", src_shape = "Circ", bkg_shape = "Circ", average = "med"):
+def time_series(xcenter, ycenter, filenames, r = None, r_in = None, r_out = None, flat_name = False, w = None, h = None, w_in = None, w_out = None, h_out = None, red = False, red2 = False, mode = "astropy", src_shape = "Circ", bkg_shape = "Circ", average = "med"):
 
     flux_table = Table(names = ('raw_flux', 'bkg_flux', 'res_flux', 'time'))
     
