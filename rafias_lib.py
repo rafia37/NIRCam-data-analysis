@@ -1,11 +1,10 @@
 from astropy.io import fits
-from astropy.table import Table, Column, hstack
+from astropy.table import Table, Column, hstack,vstack
 from photutils import CircularAperture, RectangularAperture, CircularAnnulus, aperture_photometry
 from astropy.modeling import models, fitting
 import numpy as np
-import pdb
-import glob
-import matplotlib
+import everett_code as ec
+import pdb, glob, itertools, warnings
 import matplotlib.pyplot as plt
 
 
@@ -13,7 +12,59 @@ import matplotlib.pyplot as plt
 
 
 
+
+def fname_generator(tests, div, mmm = 'MMM'):
+    """
+    Takes:
+    tests = list of test names as included in filenames. Type = list (of strings)
+    div = the index of first test in tests that requires red files. Type = Integer
+    
+    Returns
+    fname = Filename of NIRCam images for each test given in the tests list (for weak lens tests)
+    """
+    fn1 = '/data1/tso_analysis/all_tso_cv3/raw_separated_'+mmm+'/NRCN821WLP8'
+    a1 = ['-*_1_481_SE_*/*.slp.fits', '-*_1_481_SE_*/*.red.fits'] # 0 for slp, 1 for red
+    b4 = ['-*_1_489_SE_*/*.slp.fits', '-*_1_489_SE_*/*.red.fits']
+
+    fname = []
+    for i, t in enumerate(tests):                        
+        if i < div:                                          #slp files
+            globals()['%s_a1' % t] = np.sort(glob.glob(fn1 + t + a1[0]))[2:]
+            globals()['%s_b4' % t] = np.sort(glob.glob(fn1 + t + b4[0]))[2:]
+            
+            if i==0: globals()['%s_b4' % t] =  globals()['%s_b4' % t][:-1] # for the unequal sub array issue
+            
+            fname.append(globals()['%s_a1' % t])
+            fname.append(globals()['%s_b4' % t])
+        else:                                              #red files
+            globals()['%s_a1' % t] = np.sort(glob.glob(fn1 + t + a1[1]))[2:]
+            globals()['%s_b4' % t] = np.sort(glob.glob(fn1 + t + b4[1]))[2:]
+            fname.append(globals()['%s_a1' % t])
+            fname.append(globals()['%s_b4' % t])
+    
+    return fname
+
+
+
+
+
+
+
 def test_image(filename, r = False, r2 = False, f_name = False, Time = True):
+    """
+    Takes:
+    filename = filename of a single image. Type = String
+    r = red file, slope1 method. Type = Boolean
+    r2 = red file, slope2 method. Type = Boolean
+    f_name = name of flatfield file if it needs to be aplied. Type = String
+    Time = whether you want the time or not. Type = Boolean
+    
+    Returns:
+    image2d = 2 dimensional image array. Type = ndarray
+    time = Integration time of the image. Type = Float
+    header = header info of the fits file. Type = ndarray
+    mask = mask that blocks out NaNs. Type = ndarray
+    """
     hdu = fits.open(filename)
     image = hdu[0].data
     header = hdu[0].header
@@ -23,22 +74,7 @@ def test_image(filename, r = False, r2 = False, f_name = False, Time = True):
         flat_file = fits.open(f_name)
         flat = flat_file[1].data
         flat_file.close()
-    """
-    if r == False:          #.slp files
-        image2d = image[0]
-    elif r2 == False:       #.red file, Slope1 method
-        if f_name != False:
-            slope = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
-            image2d = slope/flat
-        else:
-            image2d = (image[-1] - image[0])/((header['NGROUP']-1)*header['TGROUP'])
-    else:                     #.red file, Slope2 method
-        if f_name != False:
-            slope = image[-1]/(header['NGROUP']*header['TGROUP'])
-            image2d = slope/flat
-        else:
-            image2d = image[-1]/(header['NGROUP']*header['TGROUP'])
-    """   
+        
     if r == False:          #.slp files
         image2d = image[0]
     elif r2 == False:       #.red file, Slope1 method
@@ -66,17 +102,30 @@ def test_image(filename, r = False, r2 = False, f_name = False, Time = True):
 
 
 
-def photometry(image2d, cen_x, cen_y, mask, index = None, shape = 'Circ', rad = None, ht = None, wid = None, ang = 0.0):
-    if type(cen_x) == float:
-        if shape == 'Circ':
-            aperture = CircularAperture((cen_x, cen_y), r = rad)
-        elif shape == 'Rect':
-            aperture = RectangularAperture((cen_x, cen_y), w = wid, h = ht, theta = ang)
-    else:
-        if shape == 'Circ':
-            aperture = CircularAperture((cen_x[index], cen_y[index]), r = rad)
-        elif shape == 'Rect':
-            aperture = RectangularAperture((cen_x[index], cen_y[index]), w = wid, h = ht, theta = ang)
+
+
+def photometry(image2d, cen_x, cen_y, mask, index = 0, shape = 'Circ', rad = None, r_in = None, r_out = None, ht = None, wid = None, w_in = None, w_out = None, h_out = None, ang = 0.0):
+    """
+    Takes:
+    image2d = 2 dimensional image array. Type = ndarray
+    cen_x, cen_y = x & y center position. Type = ndarray/list
+    mask = mask that blocks out NaNs. Type = ndarray
+    index = if cen_x and cen_Y is a list of more than 1 element, specify the desired index. Type = Integer
+    shape = 'Circ':CircularAperture, 'Rect':RectangularAperture, 'CircAnn':CircularAnnulus, 'RectAnn':RectangularAnnulus
+    rad, r_in, r_out, ht, wid, w_in, w_out, h_out, ang = Astropy's aperture parameters 
+    
+    Returns:
+    flux = flux of the image extracted by the aperture described in the "shape" parameter. Type = Float
+    aperture = aperture object created by astropy
+    """
+    if shape == 'Circ':
+        aperture = CircularAperture((cen_x[index], cen_y[index]), r = rad)
+    elif shape == 'Rect':
+        aperture = RectangularAperture((cen_x[index], cen_y[index]), w = wid, h = ht, theta = ang)
+    elif shape == 'CircAnn':
+        aperture = CircularAnnulus((cen_x[index], cen_y[index]), r_in = r_in, r_out = r_out)
+    elif shape == 'RectAnn':
+        aperture = RectangularAnnulus((cen_x[index], cen_y[index]), w_in = w_in, w_out = w_out, h_out = h_out, theta = ang)
             
     phot_table = aperture_photometry(image2d, aperture, mask = mask)
     flux = phot_table[0][0]
@@ -88,14 +137,86 @@ def photometry(image2d, cen_x, cen_y, mask, index = None, shape = 'Circ', rad = 
 
 
 
-def time_series(xcenter, ycenter, filenames, r = None, r_in = None, r_out = None, flat_name = False, w = None, h = None, w_in = None, w_out = None, h_out = None, red = False, red2 = False, mode = "astropy", src_shape = "Circ", bkg_shape = "Circ", average = "med"):
+
+
+def col_col(image, mask1, cenX, cenY, r, box = 150, plots = False, col = 160):
+    new_image = np.zeros_like(image)
+    xcen = int(cenX)
+    ycen = int(cenY)
+    y, x = np.mgrid[:image.shape[0], :image.shape[1]]
+    mask2 = ((x - xcen)**2 + (y - ycen)**2) <= (r**2)
+    mask3 = (y > (ycen-box)) & (y < (ycen+box))
+    for i in range(xcen-box, xcen+box, 1):
+        final_pts = (mask1==False) & (mask2==False) & (mask3==True) & (x==i)
+        flux = image[final_pts]
+        y_coord = y[final_pts]
+        original = image[:,i]
+        a, b = ec.robust_poly(y_coord, flux, 1, sigreject=3.0, iteration=3)
+        gen_y = np.arange(0, image.shape[1])
+        fit = (a*gen_y) + b
+        final = original - fit
+        new_image[:, i] = final
+        if (plots == True) & (i == col):
+            plt.plot(y_coord, flux,'r.', label = "masked col %i" % i)
+            plt.plot(gen_y, fit, 'k--', label = "polynomial fit")
+            plt.plot(gen_y, original, 'b', label = "unmasked flux")
+            plt.plot(gen_y, final, 'g', label = "detrended")
+            plt.xlabel("y coordinate")
+            plt.ylabel("flux")
+            plt.legend(loc="best")
+    return new_image
+
+
+
+
+
+
+
+def row_row(image, mask1, cenX, cenY, r, box = 150, plots = False, row = 160):
+    new_image = np.zeros_like(image)
+    xcen = int(cenX)
+    ycen = int(cenY)
+    y, x = np.mgrid[:image.shape[0], :image.shape[1]]
+    mask2 = ((x - xcen)**2 + (y - ycen)**2) <= (r**2)
+    mask3 = (x > (xcen-box)) & (x < (xcen+box))
+    for i in range(ycen-box, ycen+box, 1):
+        final_pts = (mask1==False) & (mask2==False) & (mask3==True) & (y==i)
+        flux = image[final_pts]
+        x_coord = x[final_pts]
+        original = image[i,:]
+        a, b = ec.robust_poly(x_coord, flux, 1, sigreject=3.0, iteration=3)
+        gen_x = np.arange(0, image.shape[0])
+        fit = (a*gen_x) + b
+        final = original - fit
+        new_image[i, :] = final
+        if (plots == True) & (i == row):
+            plt.plot(x_coord, flux,'r.', label = "masked row %i" % i)
+            plt.plot(gen_x, fit, 'k--', label = "polynomial fit")
+            plt.plot(gen_x, original, 'b', label = "unmasked row %i" % i)
+            plt.plot(gen_x, final, 'g', label = "detrended")
+            plt.xlabel("x coordinate")
+            plt.ylabel("flux")
+            plt.legend(loc="best")
+    return new_image
+                
+            
+
+        
+
+        
+
+
+
+
+
+def time_series(xcenter, ycenter, filenames, r = None, r_in = None, r_out = None, rs_in = None, rs_out = None, flat_name = False, w = None, h = None, w_in = None, w_out = None, h_out = None, ws_in = None, ws_out = None, hs_out = None, red = False, red2 = False, bg_xcen = None, bg_ycen = None, mode = "astropy", src_shape = "Circ", bkg_shape = "Circ", average = "med"):
 
     flux_table = Table(names = ('raw_flux', 'bkg_flux', 'res_flux', 'time'))
     
     for i, hdu in enumerate(filenames):
         test_im = test_image(filename = hdu, r = red, r2 = red2, f_name = flat_name)
         image2d, time, header, mask = test_im[0], test_im[1], test_im[2], test_im[3]
-        ap_phot = photometry(image2d, xcenter, ycenter, mask, index = i, shape = src_shape, rad = r, wid = w, ht = h)
+        ap_phot = photometry(image2d, xcenter, ycenter, mask, index = i, shape = src_shape, rad = r, r_in = rs_in, r_out = rs_out, ht = h, wid = w, w_in = ws_in, w_out = ws_out, h_out = hs_out)
         raw_flux = ap_phot[0]
         source_ap = ap_phot[1]
        
@@ -105,18 +226,26 @@ def time_series(xcenter, ycenter, filenames, r = None, r_in = None, r_out = None
                 bkg_ap = CircularAnnulus((xcenter[i], ycenter[i]), r_in = r_in, r_out = r_out)
                 bkg = aperture_photometry(image2d, bkg_ap, mask = mask)
                 bkg_mean = bkg['aperture_sum']/bkg_ap.area()
-                bkg_flux = bkg_mean*source_ap.area()
-                res_flux = raw_flux - bkg_flux
-            if bkg_shape == "Rect":
+            
+            elif bkg_shape == "Rect":
+                bkg_ap = photometry(image2d, bg_xcen, bg_ycen, mask, index = i, shape = bkg_shape, ht = h, wid = w)[1]
+                bkg = aperture_photometry(image2d, bkg_ap, mask = mask)
+                bkg_mean = bkg['aperture_sum']/bkg_ap.area()
+            
+            elif bkg_shape == "RectAnn":
                 bkg_ap = RectangularAnnulus((xcenter[i], ycenter[i]), w_in = w_in, w_out = w_out, h_out = h_out, 
                                                    theta = 0.0)
                 bkg = aperture_photometry(image2d, bkg_ap, mask = mask)
-                bkg_mean = bkg/bkg_apperture.area()
-                bkg_flux = bkg_mean*source_ap.area()
-                res_flux = raw_flux - bkg_flux
+                bkg_mean = bkg['aperture_sum']/bkg_ap.area()
+                
+            else:
+                warnings.warn("Not a recognized astropy shape")
+            
+            bkg_flux = bkg_mean*source_ap.area()
+            res_flux = raw_flux - bkg_flux
                 
 
-        elif mode == "rl":
+        elif mode == "shapes":
             y, x = np.mgrid[:image2d.shape[0], :image2d.shape[1]]
             if bkg_shape == "Circ":
                 bkg_pts = ((((x - xcenter[i])**2 + (y - ycenter[i])**2) > (r_in)**2) & 
@@ -125,7 +254,7 @@ def time_series(xcenter, ycenter, filenames, r = None, r_in = None, r_out = None
                 bkg_pts = ((((x - xcenter[i])**2 + (y - ycenter[i])**2) > (r_in)**2) & 
                                ((np.abs(x - xcenter[i]) < r_out) & (np.abs(y -ycenter[i]) < r_out)))
             else:
-                print "Not a recognized shape"
+                warnings.warn("Not a recognized shape")
 
             if average == "med":
                 bkg_med = np.nanmedian(image2d[bkg_pts])
@@ -136,9 +265,24 @@ def time_series(xcenter, ycenter, filenames, r = None, r_in = None, r_out = None
                 mad = np.nanmedian(ad)
                 keep_pts = (np.abs(image2d-np.nanmedian(image2d[bkg_pts]))<(5*mad)) & bkg_pts
                 bkg_med = np.nanmean(image2d[keep_pts])
+            else:
+                warnings.warn("Not a recognized average")
 
             bkg_flux = bkg_med*(np.pi*(r**2))
             res_flux = raw_flux - bkg_flux
+            
+        elif mode == "col_col":
+            new_im = col_col(image2d, mask, xcenter[i], ycenter[i], r, box = 150)
+            bkg_flux = 0
+            res_flux = photometry(new_im, xcenter, ycenter, mask, index = i, shape = 'Circ', rad = r)[0]
+            
+        elif mode == "row_row":
+            new_im = row_row(image2d, mask, xcenter[i], ycenter[i], r, box = 150)
+            bkg_flux = 0
+            res_flux = photometry(new_im, xcenter, ycenter, mask, index = i, shape = 'Circ', rad = r)[0]
+            
+        else:
+            raise Warning("Not a recognized mode")
         
         flux_table.add_row([raw_flux, bkg_flux, res_flux, time])
 
@@ -146,18 +290,6 @@ def time_series(xcenter, ycenter, filenames, r = None, r_in = None, r_out = None
 
 
 
-
-
-    """flux_data = Table(names=('Flux','Time'))
-    
-    for index, hdus in enumerate(hdu_filenames):
-        image2d = test_image(filename = hdus, r = red, r2 = red2)[0]
-        header = test_image(filename = hdus, r = red, r2 = red2)[1]
-        mask = np.isnan(image2d) == True
-        flux = photometry(image2d, center_x, center_y, mask, index, shape, radius, height, width, angle)
-        time = [(header["NGROUP"] + 1) * header["TGROUP"] * (header["ON_NINT"] - 1)]
-        flux_data.add_row([flux, time])
-    return flux_data"""
 
 
 
@@ -185,6 +317,10 @@ def light_curve(x, y, x_err = None, y_err = None, style = 'r.-', lbl = None):
     plt.xlabel('Time[sec]')
     plt.ylabel('Normalized Flux[DN/s]')
     plt.title('Simple light curve')
+    
+    
+    
+    
     
     
     
@@ -232,6 +368,10 @@ def rms_vs_bin(x, y, bin_size_low, bin_size_up, bin_size_inc, num_points, style,
     
     
     
+    
+    
+    
+    
 
 def norm_flux_error(flux, gain, hdu_filenames, red = False, red2 = False):
     
@@ -262,6 +402,10 @@ def norm_flux_error(flux, gain, hdu_filenames, red = False, red2 = False):
         norm_error.append(errors_normalized)
         hdu.close()
     return norm_error
+
+
+
+
 
 
 
@@ -298,12 +442,12 @@ def gen_center_g2d(center_x, center_y, box_width, amp, x_std, y_std, Theta, hdu_
         gauss2D = models.Gaussian2D(amplitude = amp, x_mean = center_x, y_mean = center_y, x_stddev = x_std, y_stddev = y_std, theta = Theta)
         g = fit_g(gauss2D,x_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],y_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],image2d[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width])
         g1 = fit_g(g,x_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],y_pos[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width],image2d[center_y-box_width:center_y+box_width,center_x-box_width:center_x+box_width])
-        x_values.append(g1.x_mean)
-        y_values.append(g1.y_mean)
+        x_values.append(g1.x_mean[0])
+        y_values.append(g1.y_mean[0])
     
     #Results
     separate_centers = zip(x_values,y_values) 
-    return separate_centers, x_values, y_values
+    return np.array(separate_centers), np.array(x_values), np.array(y_values)
 
 
 
@@ -311,76 +455,6 @@ def gen_center_g2d(center_x, center_y, box_width, amp, x_std, y_std, Theta, hdu_
 
 
 
-
-def radius_testing(centers, r_src_low, r_src_up, r_src_inc, r_in_low, r_in_up, r_in_inc, r_out_low, r_out_up, r_out_inc, hdu_filenames, red = False, red2 = False):
-    """ 
-    PARAMETERS:
-        centers = center of every image of your data set; Type = Array [of tuples]
-        r_src_low = lower limit of source radius (circular aperture radius) array; Type = float 
-        r_src_up = upper limit of source radius (circular aperture radius) array; Type = float
-        r_src_inc = increment of source radius (circular aperture radius) array; Type = float
-        r_in parameters = Same as the r_src parameters, just for inner radius of annular apperture (bkg sub)
-        r_out parameters = Same as the r_src parameters, just for outer radius of annular apperture (bkg sub)
-        hdu_filenames = list of fits filenames; Type = List [of strings]
-        red = Whether the files are .red files or not. Default value: "False"; Type = Boolean
-        red2 = Whether you want to use Slope2 method or not. Default value: "False"; Type = Boolean. 
-    
-    RETURNS: 
-        rad_test = column names: 'Median_Res_Flux','St_Dev', 'norm_stdev', 'r_source','r_in','r_out', 'rIn - r', 'rOut - rIn'; Type = Table  
-    """
-    r_source = np.arange(r_src_low,r_src_up,r_src_inc)
-    r_inner = np.arange(r_in_low,r_in_up,r_in_inc)
-    r_outer = np.arange(r_out_low,r_out_up,r_out_inc)
-    flux_and_parameters = Table(names=('residual_aperture_sum', 'r_source', 'r_in','r_out'))
-    for index, hdus in enumerate(hdu_filenames):
-        image2d = test_image(filename = hdus, r = red, r2 = red2)[0]    
-        mask = test_image(filename = hdus, r = red, r2 = red2)[3]
-        for r in r_source:
-            for r_in in r_inner:
-                for r_out in r_outer:
-                    if (r<r_in) and (r<r_out) and (r_in<r_out):
-                        aperture = CircularAperture(centers[index], r)
-                        annular_apperture =CircularAnnulus(centers[index], r_in, r_out)
-                        rawflux_table = aperture_photometry(image2d, aperture, mask = mask)
-                        bkgflux_table = aperture_photometry(image2d, annular_apperture, mask = mask)
-                        phot_table = hstack([rawflux_table, bkgflux_table], table_names = ['raw','bkg'])
-                        bkg_mean = phot_table['aperture_sum_bkg']/annular_apperture.area()
-                        bkg_sum = bkg_mean*aperture.area()
-                        final_sum = phot_table['aperture_sum_raw'] - bkg_sum
-                        phot_table['residual_aperture_sum'] = final_sum
-                        flux_and_parameters.add_row([final_sum,r,r_in,r_out])
-
-       
-    #Generating median flux and standard deviation at each r_source
-    rad_test = Table(names=('Median_Res_Flux','St_Dev', 'norm_stdev', 'r_source','r_in','r_out', 'rIn - r', 'rOut - rIn'))
-    for r in r_source:
-        for r_in in r_inner:
-            for r_out in r_outer:
-                if (r<r_in) and (r<r_out) and (r_in<r_out):
-                    indices = ((flux_and_parameters['r_source'] == r) & (flux_and_parameters['r_in'] == r_in) & (flux_and_parameters['r_out'] == r_out)) 
-                    st_dev = np.std(flux_and_parameters["residual_aperture_sum"][indices])
-                    median_flux = np.median(flux_and_parameters["residual_aperture_sum"][indices])
-                    norm_stdev = st_dev/median_flux
-                    rad_test.add_row([median_flux,st_dev,norm_stdev,r,r_in,r_out,r_in-r,r_out-r_in])
-    
-    #Finding the best combination
-    r1 = rad_test['r_source']
-    r_in1 = rad_test['r_in']
-    r_out1 = rad_test['r_out']
-    min_std_dev = np.amin(rad_test['norm_stdev'])
-    best_r = r1[np.argmin(rad_test['norm_stdev'])]
-    best_r_in = r_in1[np.argmin(rad_test['norm_stdev'])]
-    best_r_out = r_out1[np.argmin(rad_test['norm_stdev'])]
-    print "The minimum Standard deviation is %f" % min_std_dev
-    print "It occurs for the radius r = %f" % best_r
-    print "It occurs for the inner radius r_in = %f" % best_r_in
-    print "It occurs for the outer radius r_out = %f" % best_r_out
-    return rad_test
-    
-    
-    
-    
-    
 
     
     
@@ -432,4 +506,45 @@ def linear_bestfit(x, y, slope_guess, intercept_guess, show_plot = False, x_err 
         plt.ylabel('Normalized Detrended Flux')
         plt.title('Detrended Time Series')
         return detrend_flux_data
+
     
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+def radius_testing(cenX1, cenY1, fnames1, cenX2, cenY2, fnames2, r_src_low, r_src_up, r_src_inc, r_in_low, r_in_up, r_in_inc, r_out_low, r_out_up, r_out_inc, Red = False, Red2 = False):
+    
+    r_source = np.arange(r_src_low,r_src_up,r_src_inc)
+    r_inner = np.arange(r_in_low,r_in_up,r_in_inc)
+    r_outer = np.arange(r_out_low,r_out_up,r_out_inc)
+    rad_test = Table(names=('norm_stdev', 'r_source', 'r_in','r_out', 'rIn - r', 'rOut - rIn'))
+    for R in r_source:
+        for R_in in r_inner:
+            for R_out in r_outer:
+                if (R<R_in) and (R<R_out) and (R_in<R_out):
+                    data1 = time_series(cenX1, cenY1, fnames1, r = R, r_in = R_in, r_out = R_out, red = Red, red2 = Red2)
+                    data2 = time_series(cenX2, cenY2, fnames2, r = R, r_in = R_in, r_out = R_out, red = Red, red2 = Red2)
+                    detrended1 = linear_bestfit(data1['time'], data1['res_flux'], 0.00002, 1)
+                    detrended2 = linear_bestfit(data2['time'], data2['res_flux'], 0.00002, 1)
+                    av = (detrended1 + detrended2)/2.
+                    stdev = np.std(av)/np.median(av)
+                    rad_test.add_row([stdev, R, R_in, R_out, R_in-R, R_out-R_in])
+    
+    #Finding the best combination
+    a = rad_test['norm_stdev']
+    min_std_dev = np.amin(a)
+    best_r = rad_test['r_source'][np.argmin(a)]
+    best_r_in = rad_test['r_in'][np.argmin(a)]
+    best_r_out = rad_test['r_out'][np.argmin(a)]
+    print "The minimum Standard deviation is %f" % min_std_dev
+    print "It occurs for the radius r = %f" % best_r
+    print "It occurs for the inner radius r_in = %f" % best_r_in
+    print "It occurs for the outer radius r_out = %f" % best_r_out
+    return rad_test
+
